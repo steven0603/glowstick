@@ -201,6 +201,100 @@ def print_taiex_table():
     console.print(t)
 
 
+# ── 歷史績效總表 ──────────────────────────────────────────────────────────────
+
+def print_history_table():
+    """
+    印出從 START_DATE 到今日的基金 & TAIEX 逐日歷史總表。
+    欄位：日期 | 基金NAV(USD) | 基金日報酬 | 基金累積報酬 | TAIEX | TAIEX日報酬 | TAIEX累積報酬 | 匯率
+    每次呼叫皆從 DB 取最新資料，自動涵蓋到今日已更新的最後一筆。
+    """
+    nav_rows   = db.get_nav_history(start_date=START_DATE)
+    taiex_rows = db.get_taiex_history(start_date=START_DATE)
+
+    if not nav_rows:
+        console.print("[red]無基金淨值資料，請先執行選項 1 更新資料。[/red]")
+        return
+
+    # 建立 TAIEX lookup
+    taiex_map = {r["date"]: r for r in taiex_rows}
+
+    p0     = nav_rows[0]["nav_usd"]
+    t0_twd = taiex_rows[0]["close"] if taiex_rows else None
+
+    last_date = nav_rows[-1]["date"]
+    title = (f"基金 & TAIEX 歷史績效總表  "
+             f"{START_DATE} ～ {last_date}  "
+             f"（共 {len(nav_rows)} 日）")
+
+    t = Table(title=title, box=box.SIMPLE_HEAVY, title_style="bold cyan")
+    t.add_column("日期",           style="dim",    no_wrap=True)
+    t.add_column("基金 NAV\n(USD)", justify="right")
+    t.add_column("基金\n日報酬",    justify="right")
+    t.add_column("基金\n累積報酬",  justify="right")
+    t.add_column("TAIEX\n(TWD)",   justify="right")
+    t.add_column("TAIEX\n日報酬",   justify="right")
+    t.add_column("TAIEX\n累積報酬", justify="right")
+    t.add_column("匯率\nTWD/USD",   justify="right", style="dim")
+
+    for i, nav in enumerate(nav_rows):
+        d = nav["date"]
+
+        # 基金報酬
+        cumul_fund = (nav["nav_usd"] - p0) / p0
+        if i == 0:
+            daily_fund = None
+        else:
+            prev_nav = nav_rows[i - 1]["nav_usd"]
+            daily_fund = (nav["nav_usd"] - prev_nav) / prev_nav if prev_nav else None
+
+        # TAIEX
+        tx = taiex_map.get(d)
+        taiex_close  = tx["close"]     if tx else None
+        cumul_bench  = ((taiex_close - t0_twd) / t0_twd) if (tx and t0_twd) else None
+        if i == 0 or taiex_close is None:
+            daily_bench = None
+        else:
+            prev_tx = taiex_map.get(nav_rows[i - 1]["date"])
+            prev_close = prev_tx["close"] if prev_tx else None
+            daily_bench = ((taiex_close - prev_close) / prev_close
+                           if prev_close else None)
+
+        # 顏色
+        def _colored(val):
+            if val is None:
+                return Text("—", style="dim")
+            style = "green" if val >= 0 else "red"
+            return Text(f"{val*100:+.2f}%", style=style)
+
+        t.add_row(
+            d,
+            f"{nav['nav_usd']:>15,.0f}",
+            _colored(daily_fund),
+            _colored(cumul_fund),
+            f"{taiex_close:,.2f}" if taiex_close else "—",
+            _colored(daily_bench),
+            _colored(cumul_bench),
+            f"{nav['exchange_rate']:.4f}",
+        )
+
+    console.print(t)
+
+    # 摘要列
+    last_nav  = nav_rows[-1]["nav_usd"]
+    total_ret = (last_nav - p0) / p0
+    last_tx   = taiex_map.get(nav_rows[-1]["date"])
+    bench_ret = ((last_tx["close"] - t0_twd) / t0_twd
+                 if (last_tx and t0_twd) else None)
+
+    ret_color = "green" if total_ret >= 0 else "red"
+    console.print(
+        f"\n  基金累積報酬  [{ret_color}][bold]{total_ret*100:+.2f}%[/bold][/{ret_color}]"
+        + (f"   vs   TAIEX [{('green' if bench_ret>=0 else 'red')}]{bench_ret*100:+.2f}%[/{'green' if bench_ret>=0 else 'red'}]"
+           if bench_ret is not None else "")
+    )
+
+
 # ── 報酬率折線圖 ──────────────────────────────────────────────────────────────
 
 def plot_returns(save_path: str | None = None) -> str:
