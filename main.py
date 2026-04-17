@@ -101,7 +101,7 @@ def print_menu():
     console.print("\n[bold yellow]═══ 功能選單 ═══[/bold yellow]")
     console.print(" [cyan]1[/cyan]  更新今日價格 & 計算淨值")
     console.print(" [cyan]2[/cyan]  查看投資組合（持股表格）")
-    console.print(" [cyan]3[/cyan]  查看 TAIEX 報酬表")
+    console.print(" [cyan]3[/cyan]  查看基金 & TAIEX 歷史績效總表")
     console.print(" [cyan]4[/cyan]  生成每日 Markdown 紀錄")
     console.print(" [cyan]5[/cyan]  繪製報酬率折線圖")
     console.print(" [cyan]6[/cyan]  計算 Alpha（完整過程）")
@@ -194,7 +194,7 @@ def do_portfolio():
 # ── TAIEX ─────────────────────────────────────────────────────────────────────
 
 def do_taiex():
-    rep.print_taiex_table()
+    rep.print_history_table()
 
 
 # ── 每日 Markdown ─────────────────────────────────────────────────────────────
@@ -481,6 +481,8 @@ def main():
         else:
             console.print("[dim]請手動選擇 '0' 進行初始化後再使用其他功能。[/dim]")
     else:
+        # 將初始 3/23 買入記錄補入 trade_log（只跑一次）
+        pf.add_initial_trades_to_log()
         # 每次開啟自動補齊到今日
         do_auto_catchup()
 

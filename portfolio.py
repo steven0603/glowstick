@@ -71,11 +71,75 @@ def initialize_portfolio():
     print("初始化完成。\n")
 
 
+# ── 初始交易記錄遷移 ─────────────────────────────────────────────────────────
+
+def add_initial_trades_to_log():
+    """
+    將 3/23 初始 14 檔買入記錄寫入 trade_log，
+    並把 initial_snapshot 改為「購買前」狀態（只有現金，無持股），
+    讓 _get_holdings_and_cash_at_date 可以從零完整重播。
+    只執行一次（以 system_state 標記防止重複）。
+    """
+    with db.get_db() as conn:
+        done = conn.execute(
+            "SELECT value FROM system_state WHERE key='initial_trades_added'"
+        ).fetchone()
+    if done:
+        return
+
+    with db.get_db() as conn:
+        snap_row = conn.execute(
+            "SELECT value FROM system_state WHERE key='initial_snapshot'"
+        ).fetchone()
+    if not snap_row:
+        return
+
+    initial = json.loads(snap_row["value"])
+    if "initial_capital_twd" in initial:
+        return  # 已是新格式
+
+    holdings_dict  = initial["holdings"]   # {ticker: {name, ticker, shares, avg_cost_twd}}
+    cash_twd_snap  = initial["cash_twd"]   # 購買後剩餘現金 (10%)
+
+    # 計算初始總資金 = 股票成本（含手續費）+ 剩餘現金
+    total_stock_twd = sum(h["shares"] * h["avg_cost_twd"] for h in holdings_dict.values())
+    total_fees_twd  = total_stock_twd * BUY_FEE_RATE
+    initial_capital_twd = cash_twd_snap + total_stock_twd + total_fees_twd
+
+    # 逐一寫入 trade_log
+    for ticker, h in sorted(holdings_dict.items()):
+        shares   = h["shares"]
+        price    = h["avg_cost_twd"]
+        fee_twd  = shares * price * BUY_FEE_RATE
+        net_twd  = -(shares * price + fee_twd)
+        db.save_trade(START_DATE, h["name"], ticker, "BUY",
+                      shares, price, fee_twd, net_twd)
+
+    # 更新 initial_snapshot → 購買前狀態（全現金，無持股）
+    new_snap = json.dumps({
+        "initial_capital_twd": initial_capital_twd,
+        "holdings": {},
+        "cash_twd": initial_capital_twd,
+    })
+    with db.get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value) VALUES ('initial_snapshot', ?)",
+            (new_snap,)
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO system_state (key, value) "
+            "VALUES ('initial_trades_added', 'true')"
+        )
+
+    print(f"  ✓ 新增 {len(holdings_dict)} 筆初始買入記錄（3/23 開盤價，含 0.1% 手續費）")
+    print(f"  ✓ 初始資金：TWD {initial_capital_twd:,.2f}")
+
+
 # ── 歷史持倉重建 ──────────────────────────────────────────────────────────────
 
 def _get_holdings_and_cash_at_date(date_str: str) -> tuple[list[dict], float]:
     """
-    依 date_str 重建當時的持倉與現金（從 initial_snapshot 重播交易紀錄）。
+    依 date_str 重建當時的持倉與現金（從 initial_snapshot 重播所有交易紀錄）。
     回傳 (holdings_list, cash_twd)。
     """
     with db.get_db() as conn:
@@ -84,14 +148,20 @@ def _get_holdings_and_cash_at_date(date_str: str) -> tuple[list[dict], float]:
         ).fetchone()
 
     if not snap_row:
-        # 無快照則退回目前持倉
         return db.get_holdings(), db.get_cash()
 
     initial = json.loads(snap_row["value"])
-    holdings_dict: dict[str, dict] = {t: dict(h) for t, h in initial["holdings"].items()}
-    cash_twd: float = initial["cash_twd"]
 
-    all_trades = sorted(db.get_trade_history(), key=lambda x: x["date"])
+    # 新格式：購買前狀態（全現金）
+    if "initial_capital_twd" in initial:
+        holdings_dict: dict[str, dict] = {}
+        cash_twd: float = initial["initial_capital_twd"]
+    else:
+        # 舊格式 fallback（購買後快照）
+        holdings_dict = {t: dict(h) for t, h in initial["holdings"].items()}
+        cash_twd = initial["cash_twd"]
+
+    all_trades = sorted(db.get_trade_history(), key=lambda x: (x["date"], x["id"]))
     for trade in all_trades:
         if trade["date"] > date_str:
             break
