@@ -329,12 +329,14 @@ def get_pending_orders() -> list[dict]:
 def update_order(order_id: int, status: str,
                  execution_date: str | None = None,
                  execution_price: float | None = None,
-                 fee_twd: float | None = None):
+                 fee_twd: float | None = None,
+                 notes: str | None = None):
     with get_db() as conn:
         conn.execute("""
-            UPDATE orders SET status=?, execution_date=?, execution_price=?, fee_twd=?
+            UPDATE orders SET status=?, execution_date=?, execution_price=?, fee_twd=?,
+                notes=COALESCE(?, notes)
             WHERE id=?
-        """, (status, execution_date, execution_price, fee_twd, order_id))
+        """, (status, execution_date, execution_price, fee_twd, notes, order_id))
 
 
 def get_all_orders() -> list[dict]:
