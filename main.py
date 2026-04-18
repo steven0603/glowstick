@@ -423,8 +423,13 @@ def _show_startup_snapshot():
         for ticker, h in holdings_dict.items():
             if h["shares"] <= 0:
                 continue
+            # forward fill：若當日無收盤價，沿用最近一筆
             row = db.get_price(date_str, ticker)
-            close = row["close"] if row and row.get("close") else 0
+            if row and row.get("close"):
+                close = row["close"]
+            else:
+                last_p = db.get_last_price(ticker, before_date=date_str)
+                close = last_p["close"] if last_p else 0
             val_twd = h["shares"] * close
             total_stock_twd += val_twd
             pnl_pct = (close - h["avg_cost_twd"]) / h["avg_cost_twd"] * 100 if h["avg_cost_twd"] else 0
