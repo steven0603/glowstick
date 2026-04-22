@@ -189,7 +189,7 @@ def _get_holdings_and_cash_at_date(date_str: str) -> tuple[list[dict], float]:
     holdings_list = [
         {"name": h["name"], "ticker": h["ticker"],
          "shares": h["shares"], "avg_cost_twd": h["avg_cost_twd"]}
-        for h in holdings_dict.values() if h["shares"] > 0
+        for h in holdings_dict.values() if h["shares"] > 1e-4
     ]
     return holdings_list, cash_twd
 

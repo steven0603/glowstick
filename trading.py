@@ -191,7 +191,15 @@ def process_pending_orders(processing_date: str):
         if order["order_type"] == "MARKET":
             exec_price = row.get("open")
             if exec_price is None:
-                exec_price = row.get("close")
+                # open 欄位缺失時重新從 yfinance 抓取，確保用開盤價而非收盤價
+                refetched = fetcher.fetch_stock_single(ticker, processing_date)
+                if refetched:
+                    exec_price = refetched.get("open")
+                    if exec_price:
+                        db.save_price(processing_date, ticker,
+                                      refetched.get("open"), refetched.get("high"),
+                                      refetched.get("low"), refetched.get("close"),
+                                      refetched.get("volume"))
             if exec_price:
                 _execute_trade(order, exec_price, processing_date)
                 executed += 1

@@ -213,6 +213,7 @@ def get_price_series(ticker: str, start_date: str, end_date: str) -> list[dict]:
 # ── Exchange rate ────────────────────────────────────────────────────────────
 
 def save_exchange_rate(date_str: str, rate: float):
+    rate = round(rate, 2)
     with get_db() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO exchange_rate_history (date, rate) VALUES (?,?)",

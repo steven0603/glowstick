@@ -117,6 +117,9 @@ def fetch_stock_single(ticker: str, date_str: str) -> dict | None:
         if not df.empty:
             df = _flatten(df)
             df.columns = [c.lower() for c in df.columns]
+            actual_date = df.index[0].strftime("%Y-%m-%d")
+            if actual_date != date_str:
+                return None
             row_df = df.iloc[0]
             return {
                 "date":   date_str,
