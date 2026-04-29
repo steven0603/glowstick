@@ -159,8 +159,9 @@ def _execute_trade(order: dict, execution_price: float, execution_date: str):
 def process_pending_orders(processing_date: str):
     """
     處理所有 PENDING 委託。
-    - 市價單：以 processing_date 開盤價成交
+    - 市價單：以 processing_date 開盤價成交（僅在 submitted_date 隔日之後執行）
     - 現價單：若 processing_date 的 [low, high] 含 limit_price 則成交，否則取消
+              現價單只有在 submitted_date 的隔一個交易日才有機會成交；未觸價當天即取消
     """
     orders = db.get_pending_orders()
     if not orders:
@@ -171,6 +172,10 @@ def process_pending_orders(processing_date: str):
     cancelled = 0
 
     for order in orders:
+        # 核心規則：委託必須在送出日的「下一個交易日」才能執行，當天不得成交
+        if order["submitted_date"] >= processing_date:
+            continue
+
         ticker = order["ticker"]
         row = db.get_price(processing_date, ticker)
 

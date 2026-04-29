@@ -1,6 +1,7 @@
 """
-Yahoo Finance 資料抓取模組
-所有個股、匯率、TAIEX 資料皆透過 yfinance 取得。
+資料抓取模組
+- 匯率：台灣銀行即期買賣均價（主要），yfinance（fallback）
+- 個股 / TAIEX：yfinance
 """
 
 from __future__ import annotations
@@ -9,11 +10,54 @@ from datetime import date, timedelta
 
 import pandas as pd
 import yfinance as yf
+import requests
+from bs4 import BeautifulSoup
 
 import database as db
 from config import USD_TWD_TICKER, BENCHMARK_TICKER, START_DATE
 
 warnings.filterwarnings("ignore")
+
+# ── 台銀匯率快取（每日只抓一次）────────────────────────────────────────────────
+_bot_rates_cache: dict[str, float] | None = None
+_bot_cache_date: str | None = None
+
+
+def _fetch_bot_rates_all() -> dict[str, float]:
+    """
+    從台銀網站抓取 USD/TWD 即期匯率，回傳 {date_iso: (買入+賣出)/2}。
+    同一天內只打一次網路請求。
+    """
+    global _bot_rates_cache, _bot_cache_date
+    today = date.today().isoformat()
+    if _bot_rates_cache is not None and _bot_cache_date == today:
+        return _bot_rates_cache
+
+    try:
+        url = "https://rate.bot.com.tw/xrt/quote/ltm/USD"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        result: dict[str, float] = {}
+        for row in soup.find("table").find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 6:
+                continue
+            try:
+                # cells[0]=日期, [4]=即期買入, [5]=即期賣出
+                d = cells[0].get_text(strip=True).replace("/", "-")
+                rate = (float(cells[4].get_text(strip=True)) +
+                        float(cells[5].get_text(strip=True))) / 2
+                result[d] = round(rate, 4)
+            except (ValueError, AttributeError):
+                continue
+        if result:
+            _bot_rates_cache = result
+            _bot_cache_date = today
+        return result
+    except Exception as e:
+        print(f"[台銀匯率] 抓取失敗：{e}")
+        return {}
 
 
 # ── 工具函式 ─────────────────────────────────────────────────────────────────
@@ -40,9 +84,18 @@ def _date_range_for_yf(start: str, end: str) -> tuple[str, str]:
 
 def fetch_exchange_rates(start: str, end: str) -> pd.DataFrame:
     """
-    抓取 USD/TWD 收盤匯率（TWD per 1 USD）。
-    回傳 DataFrame，index 為 date string，欄位為 rate。
+    抓取 USD/TWD 匯率（台銀即期買賣均價）。
+    優先台銀，失敗則 fallback 至 yfinance。
     """
+    bot = _fetch_bot_rates_all()
+    if bot:
+        filtered = {d: r for d, r in bot.items() if start <= d <= end}
+        if filtered:
+            df = pd.DataFrame.from_dict(filtered, orient="index", columns=["rate"])
+            df.index.name = None
+            return df.sort_index()
+
+    # Fallback: yfinance
     yf_start, yf_end = _date_range_for_yf(start, end)
     try:
         df = yf.download(USD_TWD_TICKER, start=yf_start, end=yf_end,
@@ -55,7 +108,7 @@ def fetch_exchange_rates(start: str, end: str) -> pd.DataFrame:
         result.columns = ["rate"]
         return result
     except Exception as e:
-        print(f"[匯率] 抓取失敗：{e}")
+        print(f"[匯率] yfinance 抓取失敗：{e}")
         return pd.DataFrame()
 
 
@@ -65,7 +118,11 @@ def fetch_exchange_rate_single(date_str: str) -> float | None:
     rate = db.get_exchange_rate(date_str)
     if rate:
         return rate
-    # 從 yfinance 抓
+    # 台銀
+    bot = _fetch_bot_rates_all()
+    if date_str in bot:
+        return bot[date_str]
+    # Fallback: yfinance
     yf_start = date_str
     yf_end   = _next_day(_next_day(date_str))
     try:
@@ -77,9 +134,46 @@ def fetch_exchange_rate_single(date_str: str) -> float | None:
             return close
     except Exception:
         pass
-    # fallback：使用最近一筆
+    # 最後 fallback：使用最近一筆
     last = db.get_last_exchange_rate(before_date=date_str)
     return last["rate"] if last else None
+
+
+def backfill_bot_exchange_rates() -> int:
+    """
+    用台銀即期買賣均價覆蓋 DB 中所有歷史匯率，
+    並同步重算 taiex_history.close_usd 與 nav_history.nav_usd。
+    回傳更新筆數。
+    """
+    bot = _fetch_bot_rates_all()
+    if not bot:
+        print("[台銀匯率] 無法取得資料，取消 backfill")
+        return 0
+
+    print(f"  → 寫入 {len(bot)} 筆台銀匯率...")
+    for d, r in sorted(bot.items()):
+        db.save_exchange_rate(d, r)
+
+    def _get_rate(d: str) -> float | None:
+        if d in bot:
+            return bot[d]
+        candidates = [k for k in bot if k <= d]
+        return bot[max(candidates)] if candidates else None
+
+    print("  → 重算 TAIEX close_usd...")
+    for row in db.get_taiex_history():
+        r = _get_rate(row["date"])
+        if r:
+            db.save_taiex(row["date"], row["close"], row["close"] / r)
+
+    print("  → 重算 NAV nav_usd...")
+    for row in db.get_nav_history():
+        r = _get_rate(row["date"])
+        if r:
+            db.save_nav(row["date"], row["nav_twd"], row["nav_twd"] / r, r)
+
+    print(f"  ✓ 台銀匯率 backfill 完成（{len(bot)} 筆）")
+    return len(bot)
 
 
 # ── 個股 ─────────────────────────────────────────────────────────────────────
@@ -200,6 +294,7 @@ def bulk_load_history(tickers: list[str], start: str, end: str):
 def update_today(tickers: list[str], target_date: str | None = None):
     """
     更新指定日期（預設今日）的所有資料並存入 DB。
+    個股採批次下載、永遠覆蓋 DB（不跳過已存在資料）。
     回傳 dict: {ticker: close_price, ...}, exchange_rate, taiex_close
     """
     today = target_date or date.today().isoformat()
@@ -226,16 +321,47 @@ def update_today(tickers: list[str], target_date: str | None = None):
         last_taiex = db.get_taiex_history()
         result["taiex"] = last_taiex[-1]["close"] if last_taiex else None
 
-    # 個股
-    for ticker in tickers:
-        row = fetch_stock_single(ticker, today)
-        if row:
-            db.save_price(today, ticker, row.get("open"), row.get("high"),
-                          row.get("low"), row.get("close"), row.get("volume"))
-            result["prices"][ticker] = row.get("close")
-        else:
-            # Forward fill
-            last = db.get_last_price(ticker, before_date=today)
-            result["prices"][ticker] = last["close"] if last else None
+    # 個股：批次一次性抓取，永遠覆蓋 DB（不使用快取）
+    if tickers:
+        yf_start, yf_end = _date_range_for_yf(today, today)
+        fetched: dict[str, dict] = {}
+        try:
+            raw = yf.download(tickers, start=yf_start, end=yf_end,
+                              auto_adjust=True, progress=False)
+            if not raw.empty:
+                date_strs = raw.index.strftime("%Y-%m-%d").tolist()
+                if today in date_strs:
+                    row = raw.iloc[date_strs.index(today)]
+                    is_multi = isinstance(raw.columns, pd.MultiIndex)
+                    for t in tickers:
+                        try:
+                            c = row[("Close",  t)] if is_multi else row["Close"]
+                            o = row[("Open",   t)] if is_multi else row["Open"]
+                            h = row[("High",   t)] if is_multi else row["High"]
+                            l = row[("Low",    t)] if is_multi else row["Low"]
+                            v = row[("Volume", t)] if is_multi else row.get("Volume")
+                            if pd.notna(c):
+                                fetched[t] = {
+                                    "open":   float(o) if pd.notna(o) else None,
+                                    "high":   float(h) if pd.notna(h) else None,
+                                    "low":    float(l) if pd.notna(l) else None,
+                                    "close":  float(c),
+                                    "volume": float(v) if v is not None and pd.notna(v) else None,
+                                }
+                        except (KeyError, TypeError):
+                            pass
+        except Exception as e:
+            print(f"  [!] 批次抓取個股失敗：{e}")
+
+        for t in tickers:
+            if t in fetched:
+                p = fetched[t]
+                db.save_price(today, t, p["open"], p["high"],
+                              p["low"], p["close"], p["volume"])
+                result["prices"][t] = p["close"]
+            else:
+                # 無當日資料（假日 / 無交易），沿用最近一筆
+                last = db.get_last_price(t, before_date=today)
+                result["prices"][t] = last["close"] if last else None
 
     return result

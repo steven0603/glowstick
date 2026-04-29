@@ -283,13 +283,11 @@ def rebuild_nav_history(start: str | None = None):
     count = 0
     while current <= end:
         d = current.isoformat()
-        # 只計算有匯率資料的日子
-        rate = db.get_exchange_rate(d)
-        if rate:
-            nav = calculate_nav(d)
-            if nav:
-                db.save_nav(d, nav["nav_twd"], nav["nav_usd"], nav["exchange_rate"])
-                count += 1
+        # calculate_nav 內部已處理匯率 forward-fill，週末也會儲存
+        nav = calculate_nav(d)
+        if nav:
+            db.save_nav(d, nav["nav_twd"], nav["nav_usd"], nav["exchange_rate"])
+            count += 1
         current += timedelta(days=1)
     print(f"  → 共計算 {count} 筆淨值")
 

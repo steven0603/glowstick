@@ -73,7 +73,9 @@ def do_auto_catchup():
 
     console.print(f"\n[bold yellow]自動補齊 {start_catchup} ～ {today} 的資料...[/bold yellow]")
 
-    tickers = [h["ticker"] for h in db.get_holdings()]
+    # 取得所有曾持有過的標的（當前持倉 + 歷史交易），確保補齊時不漏掉已賣出股票的歷史價格
+    tickers = list({h["ticker"] for h in db.get_holdings()} |
+                   {t["ticker"] for t in db.get_trade_history()})
     if not tickers:
         console.print("[red]尚無持股資料，請先執行初始化（選項 0）。[/red]")
         return
@@ -108,6 +110,7 @@ def print_menu():
     console.print(" [cyan]7[/cyan]  下委託單（買/賣）")
     console.print(" [cyan]8[/cyan]  查看待執行委託")
     console.print(" [cyan]9[/cyan]  查看交易紀錄")
+    console.print(" [cyan]b[/cyan]  更新歷史匯率（台銀即期買賣均價 backfill）")
     console.print(" [cyan]0[/cyan]  重新初始化系統（重算歷史）")
     console.print(" [cyan]q[/cyan]  離開")
     console.print()
@@ -149,7 +152,12 @@ def do_daily_update():
         return
     console.print(f"\n[bold]抓取 {target} 資料...[/bold]")
 
-    tickers = [h["ticker"] for h in db.get_holdings()]
+    # 以 Trade Replay 取得該日正確持倉標的，確保不漏掉任何持股
+    nav_pre = pf.calculate_nav(target)
+    if nav_pre:
+        tickers = [item["ticker"] for item in nav_pre["holdings_detail"] if item["ticker"]]
+    else:
+        tickers = [h["ticker"] for h in db.get_holdings()]
     result  = fetcher.update_today(tickers, target_date=target)
 
     # 處理當日待執行委託
@@ -325,27 +333,44 @@ def do_trade_history():
         return
 
     from rich.table import Table
+    from rich.console import Console as RichConsole
+    wide = RichConsole(width=220)
     t = Table(title="交易紀錄", box=box.ROUNDED)
-    t.add_column("日期",   style="dim")
-    t.add_column("方向",   style="bold")
-    t.add_column("標的")
-    t.add_column("股數",   justify="right")
-    t.add_column("成交價", justify="right")
-    t.add_column("手續費(TWD)", justify="right")
-    t.add_column("淨額(TWD)",   justify="right")
+    t.add_column("日期",        style="dim",  no_wrap=True)
+    t.add_column("方向",        style="bold", no_wrap=True)
+    t.add_column("標的",                      no_wrap=True)
+    t.add_column("股數",        justify="right", no_wrap=True)
+    t.add_column("成交價",      justify="right", no_wrap=True)
+    t.add_column("手續費(TWD)", justify="right", no_wrap=True)
+    t.add_column("淨額(TWD)",   justify="right", no_wrap=True)
 
     for tr_row in trades:
         color = "green" if tr_row["direction"] == "BUY" else "red"
+        ticker_short = tr_row["ticker"].replace(".TWO", "").replace(".TW", "")
         t.add_row(
             tr_row["date"],
             Text(tr_row["direction"], style=color),
-            f"{tr_row['stock_name']}({tr_row['ticker'].replace('.TW','')})",
-            f"{tr_row['quantity']:,.4f}",
+            f"{tr_row['stock_name']}({ticker_short})",
+            f"{tr_row['quantity']:,.2f}",
             f"{tr_row['price_twd']:,.2f}",
             f"{tr_row['fee_twd']:,.0f}",
             f"{tr_row['net_twd']:+,.0f}",
         )
-    console.print(t)
+    wide.print(t)
+
+
+# ── 台銀匯率 backfill ─────────────────────────────────────────────────────────
+
+def do_bot_backfill():
+    console.print("\n[bold yellow]── 台銀匯率 Backfill ──[/bold yellow]")
+    console.print("將以台銀即期買賣均價覆蓋所有歷史匯率，並重算 TAIEX / NAV 的美元欄位。")
+    if not Confirm.ask("確定執行？"):
+        return
+    n = fetcher.backfill_bot_exchange_rates()
+    if n:
+        console.print(f"[bold green]✓ 完成，共更新 {n} 筆匯率。[/bold green]")
+    else:
+        console.print("[red]取消或台銀資料無法取得。[/red]")
 
 
 # ── 啟動快照 ──────────────────────────────────────────────────────────────────
@@ -497,7 +522,7 @@ def main():
     while True:
         print_menu()
         choice = Prompt.ask("[bold]請選擇功能[/bold]",
-                            choices=["0","1","2","3","4","5","6","7","8","9","q"],
+                            choices=["0","1","2","3","4","5","6","7","8","9","b","q"],
                             default="1")
 
         if choice == "q":
@@ -524,6 +549,8 @@ def main():
             do_pending_orders()
         elif choice == "9":
             do_trade_history()
+        elif choice == "b":
+            do_bot_backfill()
 
 
 if __name__ == "__main__":
