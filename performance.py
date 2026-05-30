@@ -117,7 +117,7 @@ def calculate_alpha_full() -> dict:
 
     # 期間累積報酬
     nav_start = db.get_nav_history(start_date=START_DATE)
-    p0        = nav_start[0]["nav_usd"] if nav_start else INITIAL_CAPITAL_USD
+    p0        = INITIAL_CAPITAL_USD
     p_last    = nav_start[-1]["nav_usd"] if nav_start else p0
     total_return_fund  = (p_last - p0) / p0
 
@@ -161,10 +161,12 @@ def get_returns_table() -> list[dict]:
 
     # 初始 NAV（用於計算累積報酬）
     nav_rows  = db.get_nav_history(start_date=START_DATE)
-    p0_usd    = nav_rows[0]["nav_usd"]  if nav_rows else INITIAL_CAPITAL_USD
+    p0_usd    = INITIAL_CAPITAL_USD
 
-    taiex_rows = db.get_taiex_history(start_date=START_DATE)
-    t0_usd     = taiex_rows[0]["close_usd"] if taiex_rows else None
+    taiex_rows   = db.get_taiex_history(start_date=START_DATE)
+    taiex_before = db.get_last_taiex_before(START_DATE)
+    t0_usd       = (taiex_before["close_usd"] if taiex_before
+                    else (taiex_rows[0]["close_usd"] if taiex_rows else None))
 
     rows = []
     for r in fund_rets:

@@ -97,11 +97,7 @@ def generate_daily_markdown(date_str: str) -> str:
     nav_twd = nav_info["nav_twd"]
 
     # 計算報酬率
-    p0 = INITIAL_CAPITAL_USD
-    nav_hist = db.get_nav_history(start_date=START_DATE)
-    if nav_hist:
-        p0 = nav_hist[0]["nav_usd"]
-    ret = (nav_usd - p0) / p0 if p0 else 0
+    ret = (nav_usd - INITIAL_CAPITAL_USD) / INITIAL_CAPITAL_USD
 
     md = f"""{date_label} 價格更新：
 {price_line}
