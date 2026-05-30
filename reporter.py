@@ -423,10 +423,10 @@ def print_alpha_calculation(n1: int | None = None):
 
     console.print(f"\n[bold cyan]步驟 3：Alpha（超額報酬）[/bold cyan]")
     console.print(f"  r_f = {rf*100:.4f}%（日利率）")
-    console.print(f"  α_p = r̄_p − [[r_f + β_p × (r̄_m − r_f)]")
-    console.print(f"      = {r_p*100:.6f}% − [[{rf*100:.4f}% + {beta:.6f} × ({r_m*100:.6f}% − {rf*100:.4f}%)]")
-    console.print(f"      = {r_p*100:.6f}% − [[{rf*100:.4f}% + {capm_excess*100:.6f}%]")
-    console.print(f"      = {r_p*100:.6f}% − {capm_expected*100:.6f}%")
+    console.print(f"  α_p = r̄_p − [r_f + β_p × (r̄_m − r_f)]", markup=False)
+    console.print(f"      = {r_p*100:.6f}% − [{rf*100:.4f}% + {beta:.6f} × ({r_m*100:.6f}% − {rf*100:.4f}%)]", markup=False)
+    console.print(f"      = {r_p*100:.6f}% − [{rf*100:.4f}% + {capm_excess*100:.6f}%]", markup=False)
+    console.print(f"      = {r_p*100:.6f}% − {capm_expected*100:.6f}%", markup=False)
 
     alpha_color = "green" if alpha >= 0 else "red"
     console.print(f"      = [bold {alpha_color}]{alpha*100:+.6f}%（日均）[/bold {alpha_color}]")
