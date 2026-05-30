@@ -172,9 +172,8 @@ def do_daily_update():
         twd  = nav_info["nav_twd"]
 
         # 計算報酬率
-        nav_hist = db.get_nav_history(start_date=START_DATE)
-        p0 = nav_hist[0]["nav_usd"] if nav_hist else INITIAL_CAPITAL_USD
-        ret = (usd - p0) / p0 if p0 else 0
+        p0 = INITIAL_CAPITAL_USD
+        ret = (usd - p0) / p0
 
         console.print(f"\n  匯率：1 USD = [bold]{rate:.4f}[/bold] TWD")
         console.print(f"  TAIEX：[bold]{result.get('taiex', '-')}[/bold]")
@@ -385,7 +384,7 @@ def _show_startup_snapshot():
         return
 
     last = navs[-1]
-    p0   = navs[0]["nav_usd"]
+    p0   = INITIAL_CAPITAL_USD
     ret  = (last["nav_usd"] - p0) / p0
 
     from rich.table import Table
