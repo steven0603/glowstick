@@ -418,7 +418,7 @@ def print_alpha_calculation(n1: int | None = None):
     console.print(f"  β_p = {beta_n:.10f} / {beta_d:.10f}")
     console.print(f"      = [bold green]{beta:.6f}[/bold green]")
 
-    capm_excess   = beta * (r_bar_m - rf)          # β × (r̄_m − r_f)
+    capm_excess   = beta * (r_m - rf)               # β × (r̄_m − r_f)
     capm_expected = rf + capm_excess                # r_f + β × (r̄_m − r_f)
 
     console.print(f"\n[bold cyan]步驟 3：Alpha（超額報酬）[/bold cyan]")
