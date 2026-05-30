@@ -16,19 +16,20 @@ def get_fund_returns() -> list[dict]:
     """
     回傳基金每日報酬率序列（美元計價）。
     r_p,t = (p_t - p_{t-1}) / p_{t-1}
+    首個交易日以 INITIAL_CAPITAL_USD 為 t-1 基準。
     """
     navs = db.get_nav_history(start_date=START_DATE)
-    if len(navs) < 2:
+    if not navs:
         return []
     returns = []
-    for i in range(1, len(navs)):
+    for i in range(len(navs)):
         p_t   = navs[i]["nav_usd"]
-        p_tm1 = navs[i-1]["nav_usd"]
+        p_tm1 = INITIAL_CAPITAL_USD if i == 0 else navs[i-1]["nav_usd"]
         if p_tm1 == 0:
             continue
         returns.append({
-            "date":  navs[i]["date"],
-            "r_p":   (p_t - p_tm1) / p_tm1,
+            "date":    navs[i]["date"],
+            "r_p":     (p_t - p_tm1) / p_tm1,
             "nav_usd": p_t,
         })
     return returns
@@ -38,20 +39,22 @@ def get_benchmark_returns() -> list[dict]:
     """
     回傳 TAIEX 每日美元報酬率序列。
     r_m,t = (taiex_usd_t - taiex_usd_{t-1}) / taiex_usd_{t-1}
+    首個交易日以競賽前一交易日（START_DATE 前）的 close_usd 為 t-1 基準。
     """
     rows = db.get_taiex_history(start_date=START_DATE)
-    if len(rows) < 2:
+    if not rows:
         return []
+    taiex_before = db.get_last_taiex_before(START_DATE)
     returns = []
-    for i in range(1, len(rows)):
+    for i in range(len(rows)):
         p_t   = rows[i]["close_usd"]
-        p_tm1 = rows[i-1]["close_usd"]
-        if p_tm1 == 0:
+        p_tm1 = taiex_before["close_usd"] if i == 0 else rows[i-1]["close_usd"]
+        if not p_tm1 or p_tm1 == 0:
             continue
         returns.append({
-            "date":     rows[i]["date"],
-            "r_m":      (p_t - p_tm1) / p_tm1,
-            "taiex":    rows[i]["close"],
+            "date":      rows[i]["date"],
+            "r_m":       (p_t - p_tm1) / p_tm1,
+            "taiex":     rows[i]["close"],
             "taiex_usd": p_t,
         })
     return returns
@@ -119,7 +122,9 @@ def calculate_alpha_full() -> dict:
     total_return_fund  = (p_last - p0) / p0
 
     taiex_rows = db.get_taiex_history(start_date=START_DATE)
-    t0_usd = taiex_rows[0]["close_usd"]  if taiex_rows else None
+    taiex_before_row = db.get_last_taiex_before(START_DATE)
+    t0_usd = (taiex_before_row["close_usd"] if taiex_before_row
+              else (taiex_rows[0]["close_usd"] if taiex_rows else None))
     tN_usd = taiex_rows[-1]["close_usd"] if taiex_rows else None
     total_return_bench = ((tN_usd - t0_usd) / t0_usd) if (t0_usd and t0_usd != 0) else None
 
@@ -187,20 +192,24 @@ def get_returns_table() -> list[dict]:
 # ── TAIEX 報酬表（供 reporter 使用）─────────────────────────────────────────
 
 def get_taiex_return_table() -> list[dict]:
-    """回傳 TAIEX 從起始日至今的每日收盤及累積報酬。"""
+    """回傳 TAIEX 從起始日至今的每日收盤及累積報酬（報酬以 USD 計）。"""
     rows = db.get_taiex_history(start_date=START_DATE)
     if not rows:
         return []
 
-    t0 = rows[0]["close"]  # TWD 為基準，顯示 TWD 累積報酬
+    taiex_before = db.get_last_taiex_before(START_DATE)
+    t0_usd = taiex_before["close_usd"] if taiex_before else rows[0]["close_usd"]
+
     result = []
     for i, r in enumerate(rows):
-        cumul = (r["close"] - t0) / t0 if t0 else 0
+        prev_usd = t0_usd if i == 0 else rows[i-1]["close_usd"]
+        daily = (r["close_usd"] - prev_usd) / prev_usd if prev_usd else 0.0
+        cumul = (r["close_usd"] - t0_usd) / t0_usd if t0_usd else 0
         result.append({
-            "date":          r["date"],
-            "taiex_close":   r["close"],
-            "daily_return":  ((r["close"] - rows[i-1]["close"]) / rows[i-1]["close"])
-                              if i > 0 else 0.0,
-            "cumul_return":  cumul,
+            "date":            r["date"],
+            "taiex_close":     r["close"],
+            "taiex_close_usd": r["close_usd"],
+            "daily_return":    daily,
+            "cumul_return":    cumul,
         })
     return result

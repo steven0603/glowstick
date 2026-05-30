@@ -293,6 +293,15 @@ def save_taiex(date_str: str, close: float, close_usd: float):
         )
 
 
+def get_last_taiex_before(date_str: str) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM taiex_history WHERE date<? ORDER BY date DESC LIMIT 1",
+            (date_str,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def get_taiex_history(start_date: str | None = None) -> list[dict]:
     with get_db() as conn:
         if start_date:
